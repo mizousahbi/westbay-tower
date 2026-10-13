@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>West Bay Tower</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cormorant+Garamond:wght@400;500&family=Jost:wght@300;400;500&family=Tajawal:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+  :root { --night:#0a141c; --gold:#c9a45c; --gold-hi:#f0d9a4; --serif:"Cormorant Garamond", serif; --sans:Jost, system-ui, sans-serif; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--night); color:#fff; font-family:var(--sans); font-weight:300; }
+  body.loading { overflow:hidden; }
+  /* Arabic: its own typefaces, and no letter-spacing (it breaks the joined letters) */
+  body.ar { --serif:Amiri, serif; --sans:Tajawal, sans-serif; }
+  body.ar *:not(.logo):not(.logo *) { letter-spacing:0 !important; }
+  body.ar [data-k], body.ar .pin b, body.ar #chapters { direction:rtl; }
+
+  /* The page is one long scroll track; the stage stays pinned while you scroll through it. */
+  #track { height:1500vh; }
+  #stage { position:sticky; top:0; height:100vh; overflow:hidden; background:var(--night); }
+  #cine, #facade, #map { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #cine { z-index:1; }
+  #facade { z-index:2; object-fit:cover; visibility:hidden; }
+  #map { z-index:3; background:#04060b; pointer-events:none; }
+  #map > * { opacity:0; transition:opacity 1.4s; }
+  #map.ready > * { opacity:1; }
+  /* the gold line that carries one scene into the next */
+  #wipe { position:absolute; left:0; right:0; height:2px; z-index:4; opacity:0; pointer-events:none; background:linear-gradient(90deg, transparent, var(--gold-hi) 15%, #fff 50%, var(--gold-hi) 85%, transparent); box-shadow:0 0 18px 3px rgba(232,201,135,.75), 0 0 60px 10px rgba(201,164,92,.35); }
+
+  /* ---- map ---- */
+  .pin { display:flex; align-items:center; gap:9px; opacity:0; transition:opacity .7s; white-space:nowrap; }
+  .pin.on { opacity:1; }
+  .pin.l { flex-direction:row-reverse; }
+  body.end .pin.on:not(.home) b { opacity:0; }                /* labels step back for the final panel; the dots and arcs stay */
+  .pin b { transition:opacity .7s; }
+  .pin i { position:relative; width:11px; height:11px; border-radius:50%; background:var(--gold); border:2px solid #fff; box-shadow:0 1px 6px rgba(0,0,0,.35); flex:none; }
+  .pin i::after { content:""; position:absolute; inset:-2px; border-radius:50%; border:1.5px solid var(--gold); animation:ping 2.6s ease-out infinite; }
+  @keyframes ping { from { transform:scale(.8); opacity:.9; } to { transform:scale(3.2); opacity:0; } }
+  .pin b { background:rgba(10,20,28,.82); backdrop-filter:blur(6px); border:1px solid rgba(232,201,135,.45); color:#fff; padding:6px 11px 5px; border-radius:2px; font-weight:400; font-size:11px; letter-spacing:.2em; line-height:1.4; }
+  .pin b small, .pin b em { display:block; font-style:normal; font-size:8.5px; letter-spacing:.2em; color:var(--gold-hi); }
+  .pin b em { display:none; font-size:9.5px; font-weight:500; }
+  .pin.dist b em { display:block; }
+  .pin.home b { background:var(--gold); border-color:var(--gold); color:#14100a; font-weight:500; letter-spacing:.26em; }
+  .pin.home i { width:13px; height:13px; }
+  #map .maplibregl-ctrl-bottom-right { z-index:6; }
+  #map .maplibregl-ctrl-attrib { pointer-events:auto; opacity:.55; }
+
+  /* tower facts drawn on the tower itself while it rises: a height rule with the floor count, and tags at the base */
+  #measure { position:absolute; inset:0; z-index:6; opacity:0; pointer-events:none; }
+  #measure svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+  #measure .m { opacity:0; transition:opacity .7s; }
+  #measure .m.on { opacity:1; }
+  #measure line, #measure path { stroke:#fff; stroke-width:1.5; fill:none; filter:drop-shadow(0 0 4px rgba(0,0,0,.7)); }
+  #measure .tag { position:absolute; left:0; top:0; white-space:nowrap; font-size:12.5px; letter-spacing:.22em; text-transform:uppercase; text-shadow:0 1px 10px rgba(0,0,0,.9), 0 0 3px rgba(0,0,0,.8); }
+  #mFloors { display:flex; align-items:center; gap:12px; }
+  #mFloors b { display:grid; place-items:center; width:68px; height:68px; border-radius:50%; border:3px solid var(--gold); background:rgba(10,20,28,.9); box-shadow:0 0 22px rgba(232,201,135,.55);
+               font-family:var(--serif); font-weight:500; font-size:32px; letter-spacing:0; color:var(--gold-hi); }
+  #mFloors span { line-height:1.5; }
+  #mPlot { padding-top:7px; text-align:center; font-weight:400; }
+  #mPodium, #mBase { text-align:right; }
+  #mBase { color:var(--gold-hi); }
+
+  /* real footage of each landmark, shown as a card while the camera is over it */
+  #reel { position:absolute; right:40px; top:54%; transform:translateY(-50%); z-index:6; height:min(52vh, 480px); aspect-ratio:9/16; pointer-events:none; }
+  #reel figure { position:absolute; inset:0; margin:0; opacity:0; transform:translateY(18px) scale(.97); transition:opacity .8s, transform .8s; border:1px solid rgba(232,201,135,.75); box-shadow:0 18px 50px rgba(0,0,0,.55); background:#0a141c; }
+  #reel figure.on { opacity:1; transform:none; }
+  #reel video { width:100%; height:100%; object-fit:cover; display:block; }
+  #reel figcaption { position:absolute; left:0; right:0; bottom:0; padding:38px 14px 13px; background:linear-gradient(transparent, rgba(5,12,18,.88)); font-size:10.5px; letter-spacing:.24em; text-transform:uppercase; }
+  #reel figcaption::before { content:""; display:block; width:26px; height:1px; margin-bottom:9px; background:var(--gold-hi); }
+
+  /* scrims keep the text readable over the map and the footage */
+  #stage::before, #stage::after { content:""; position:absolute; left:0; right:0; z-index:5; pointer-events:none; }
+  #stage::before { top:0; height:40vh; background:linear-gradient(rgba(5,12,18,.72), transparent); }
+  #stage::after { bottom:0; height:55vh; opacity:0; transition:opacity .5s; background:linear-gradient(transparent, rgba(0,0,0,.66)); }
+  body.end #stage::after { opacity:1; }
+  #stage > .caption, #final, #chapters, #hint, .note { z-index:6; }
+
+  nav { position:fixed; inset:0 0 auto 0; z-index:10; display:flex; align-items:center; gap:30px; padding:22px 40px; font-size:11px; letter-spacing:.18em; text-transform:uppercase; text-shadow:0 1px 14px rgba(0,0,0,.55); }
+  nav .logo { font-family:"Cormorant Garamond", serif; font-size:20px; letter-spacing:.22em; line-height:1.05; margin-right:auto; }
+  nav .logo small { display:block; font-family:Jost, sans-serif; font-size:8px; letter-spacing:.42em; opacity:.7; }
+  nav a { color:inherit; text-decoration:none; opacity:.8; }
+  nav a:hover { opacity:1; }
+  #lang { background:none; border:1px solid rgba(255,255,255,.5); color:#fff; padding:7px 11px; font:inherit; font-size:11px; cursor:pointer; font-family:Tajawal, Jost, sans-serif; }
+  .cta { background:var(--gold); color:#fff !important; opacity:1 !important; padding:11px 20px; letter-spacing:.2em; font-size:10px; text-transform:uppercase; text-decoration:none; display:inline-block; text-shadow:none; transition:background .3s; }
+  .cta:hover { background:#b38d45; }
+  .ghost { display:inline-block; margin:0 10px; padding:10px 18px; border:1px solid currentColor; color:inherit; font-size:10px; letter-spacing:.2em; text-transform:uppercase; text-decoration:none; }
+
+  .caption { position:absolute; left:0; right:0; top:17vh; text-align:center; opacity:0; pointer-events:none; padding:0 20px; text-shadow:0 1px 18px rgba(0,0,0,.6); }
+  .caption h2 { font-family:var(--serif); font-weight:400; font-size:clamp(24px, 3.4vw, 46px); letter-spacing:.14em; }
+  .caption p { margin-top:10px; font-size:12px; letter-spacing:.3em; text-transform:uppercase; opacity:.75; }
+  .caption h2::after { content:""; display:block; width:54px; height:1px; margin:16px auto 0; background:var(--gold-hi); }
+
+  #final { position:absolute; inset:auto 40px 11vh 40px; display:flex; justify-content:space-between; align-items:flex-end; gap:24px; opacity:0; pointer-events:none; text-shadow:0 1px 10px rgba(0,0,0,.5); }
+  #final.on { pointer-events:auto; }
+  #final dl { display:grid; grid-template-columns:auto auto; gap:6px 28px; font-size:11px; letter-spacing:.16em; text-transform:uppercase; }
+  #final dt { opacity:.7; }
+  #final h3 { font-family:var(--serif); font-weight:400; font-size:clamp(20px, 2.4vw, 34px); letter-spacing:.12em; text-align:right; line-height:1.3; }
+  #final .btns { text-align:right; margin-top:16px; }
+
+  /* chapter rail + progress line */
+  #chapters { position:absolute; left:50%; bottom:3.4vh; transform:translateX(-50%); display:flex; gap:26px; font-size:9.5px; letter-spacing:.26em; text-transform:uppercase; white-space:nowrap; text-shadow:0 1px 10px rgba(0,0,0,.6); }
+  #chapters button { background:none; border:0; color:#fff; font:inherit; letter-spacing:inherit; text-transform:inherit; cursor:pointer; opacity:.45; padding:6px 0; border-top:1px solid transparent; transition:opacity .4s, color .4s, border-color .4s; }
+  #chapters button.on { opacity:1; color:var(--gold-hi); border-top-color:var(--gold-hi); }
+  #bar { position:fixed; left:0; bottom:0; width:100%; height:2px; z-index:11; background:var(--gold); transform-origin:left; transform:scaleX(0); }
+  #hint { position:absolute; right:40px; bottom:4vh; font-size:10px; letter-spacing:.3em; text-transform:uppercase; }
+  .note { position:absolute; left:40px; bottom:4vh; font-size:9px; letter-spacing:.14em; opacity:0; text-shadow:0 1px 10px rgba(0,0,0,.6); }
+
+  /* ---- the page after the journey ---- */
+  .sec { position:relative; z-index:1; padding:clamp(80px, 13vh, 160px) clamp(20px, 5vw, 80px); }
+  .sec.light { background:#efece5; color:#1d1a14; }
+  .sec.dark { background:var(--night); }
+  .sec .wrap { max-width:1280px; margin:0 auto; }
+  .eyebrow { font-size:11px; letter-spacing:.34em; text-transform:uppercase; color:var(--gold); margin-bottom:18px; }
+  .sec h2 { font-family:var(--serif); font-weight:400; font-size:clamp(30px, 4.4vw, 62px); line-height:1.12; letter-spacing:.02em; max-width:16em; }
+  .fine { font-size:11px; letter-spacing:.14em; opacity:.6; margin-top:22px; }
+  .rise { opacity:0; transform:translateY(34px); transition:opacity 1s, transform 1s cubic-bezier(.2,.7,.2,1); }
+  .rise.in { opacity:1; transform:none; }
+  .rise.d1 { transition-delay:.12s; } .rise.d2 { transition-delay:.24s; } .rise.d3 { transition-delay:.36s; }
+
+  .marquee { position:relative; z-index:1; overflow:hidden; background:var(--gold); color:#14100a; padding:15px 0; font-size:12px; letter-spacing:.3em; text-transform:uppercase; white-space:nowrap; }
+  .marquee div { display:inline-block; animation:slide 38s linear infinite; }
+  .marquee span { padding:0 26px; } .marquee span::after { content:"✦"; padding-left:52px; opacity:.6; }
+  @keyframes slide { to { transform:translateX(-50%); } }
+
+  #numbers .wrap { display:grid; grid-template-columns:1.05fr .95fr; gap:clamp(24px, 5vw, 90px); align-items:center; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:0 40px; margin-top:44px; }
+  .stats div { padding:22px 0; border-top:1px solid rgba(29,26,20,.22); }
+  .stats b { display:block; font-family:var(--serif); font-weight:400; font-size:clamp(46px, 6vw, 88px); line-height:1; color:#8c6b2f; }
+  .stats span { display:block; margin-top:10px; font-size:11px; letter-spacing:.24em; text-transform:uppercase; opacity:.75; }
+  #numbers model-viewer { width:100%; height:min(78vh, 760px); --poster-color:transparent; background:radial-gradient(ellipse at 50% 62%, #f8f6f1, #e3dfd5); }
+
+  .cards { display:flex; gap:14px; height:min(68vh, 620px); margin-top:52px; }
+  .card { position:relative; flex:1; min-width:0; overflow:hidden; border:1px solid rgba(232,201,135,.3); transition:flex 1s cubic-bezier(.2,.7,.2,1); }
+  .card:hover, .card.open { flex:2.6; }
+  .card video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .card div { position:absolute; left:0; right:0; bottom:0; padding:60px 20px 20px; background:linear-gradient(transparent, rgba(5,12,18,.9)); }
+  .card h3 { font-family:var(--serif); font-weight:400; font-size:clamp(18px, 2vw, 28px); letter-spacing:.06em; }
+  .card p { margin-top:6px; font-size:10.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold-hi); }
+
+  #reach .wrap { display:grid; grid-template-columns:.8fr 1.2fr; gap:clamp(24px, 5vw, 90px); }
+  #reachList { list-style:none; border-top:1px solid rgba(29,26,20,.25); }
+  #reachList li { display:flex; align-items:baseline; gap:18px; padding:22px 4px; border-bottom:1px solid rgba(29,26,20,.25); transition:padding .4s, background .4s; }
+  #reachList li:hover { padding-left:18px; padding-right:18px; background:rgba(201,164,92,.14); }
+  #reachList i { font-style:normal; font-size:11px; letter-spacing:.2em; color:#8c6b2f; width:2.4em; }
+  #reachList b { font-family:var(--serif); font-weight:400; font-size:clamp(20px, 2.3vw, 32px); flex:1; }
+  #reachList small { display:block; font-family:var(--sans); font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; opacity:.6; margin-top:4px; }
+  #reachList em { font-style:normal; font-size:13px; letter-spacing:.14em; white-space:nowrap; }
+
+  #worlds { text-align:center; overflow:hidden; }
+  #worlds h2 { margin:0 auto; }
+  #rings { position:relative; height:min(46vh, 380px); margin-top:60px; }
+  #rings span { position:absolute; left:50%; top:50%; width:min(34vh, 280px); aspect-ratio:1; margin:calc(min(34vh, 280px) / -2) 0 0 calc(min(34vh, 280px) / -2); border:1px solid rgba(232,201,135,.7); border-radius:50%;
+                display:grid; place-items:center; font-size:11px; letter-spacing:.3em; text-transform:uppercase; }
+  #rings strong { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); font-family:var(--serif); font-weight:400; font-size:clamp(18px, 2.2vw, 30px); letter-spacing:.2em; color:var(--gold-hi); opacity:0; white-space:nowrap; }
+
+  .collage { display:grid; grid-template-columns:repeat(12, 1fr); grid-auto-rows:clamp(120px, 19vh, 210px); grid-auto-flow:dense; gap:12px; margin-top:52px; }
+  .frame { position:relative; overflow:hidden; background:#ddd8cc; cursor:zoom-in; grid-column:span 3; }
+  .frame.w { grid-column:span 6; grid-row:span 2; } .frame.f { grid-column:span 12; grid-row:span 2; } .frame.t { grid-row:span 2; } .frame.m { grid-column:span 4; }
+  .frame img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transition:transform 1.4s cubic-bezier(.2,.7,.2,1); }
+  .frame:hover img { transform:scale(1.06); }
+  .frame b { position:absolute; left:0; right:0; bottom:0; padding:34px 16px 13px; background:linear-gradient(transparent, rgba(5,12,18,.78)); color:#fff; font-weight:400; font-size:10.5px; letter-spacing:.26em; text-transform:uppercase; }
+  #lightbox { position:fixed; inset:0; z-index:30; background:rgba(5,10,14,.94); display:grid; place-items:center; opacity:0; visibility:hidden; transition:opacity .4s, visibility .4s; cursor:zoom-out; }
+  #lightbox.on { opacity:1; visibility:visible; }
+  #lightbox img { max-width:92vw; max-height:84vh; box-shadow:0 30px 90px rgba(0,0,0,.6); }
+  #lightbox p { position:absolute; bottom:4vh; left:0; right:0; text-align:center; font-size:11px; letter-spacing:.3em; text-transform:uppercase; color:var(--gold-hi); }
+
+  /* the skyline behind the three rings */
+  #worlds { background:linear-gradient(rgba(10,20,28,.9), rgba(10,20,28,.62) 45%, rgba(10,20,28,.94)), url(brand/westbay-skyline.jpg) center 62% / cover; }
+
+  .contact { display:flex; justify-content:center; align-items:stretch; max-width:860px; margin:10px auto 0; text-align:left; box-shadow:0 30px 80px rgba(0,0,0,.45); }
+  .contact .who { width:38%; object-fit:cover; object-position:50% 12%; display:block; }
+  .contact .biz { flex:1; background:#f3eee6; color:#152b43; padding:clamp(24px, 4vw, 48px); display:flex; flex-direction:column; align-items:flex-start; }
+  .contact .mark { height:58px; margin-bottom:26px; }
+  .contact h3 { font-family:var(--serif); font-weight:500; font-size:clamp(30px, 3.4vw, 46px); line-height:1; }
+  .contact .role { margin-top:10px; font-size:10.5px; letter-spacing:.26em; text-transform:uppercase; color:#8c6b2f; }
+  .contact .say { margin:22px 0 26px; font-size:15px; line-height:1.65; max-width:30em; }
+  .contact .btns { text-align:left; margin:0 0 18px; }
+  .contact .ghost { margin:0 0 0 10px; color:#152b43; }
+  .contact .site { margin-top:auto; font-size:11px; letter-spacing:.2em; color:#152b43; opacity:.7; text-decoration:none; }
+  body.ar .contact, body.ar .contact .btns { text-align:right; } body.ar .contact .biz { align-items:flex-end; } body.ar .contact .ghost { margin:0 10px 0 0; }
+
+  #enquire { text-align:center; padding-bottom:60px; }
+  #enquire h2 { margin:0 auto 44px; }
+  #enquire .cta { padding:16px 34px; font-size:11px; }
+  footer { margin-top:clamp(70px, 12vh, 130px); padding-top:26px; border-top:1px solid rgba(255,255,255,.16); display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; font-size:10px; letter-spacing:.2em; text-transform:uppercase; opacity:.7; }
+
+  .mix { margin-top:34px; }
+  .mix h3 { font-size:11px; font-weight:400; letter-spacing:.3em; text-transform:uppercase; color:#8c6b2f; margin-bottom:14px; }
+  .mixbar { display:flex; gap:3px; height:12px; }
+  .mixbar i { background:#c9a45c; } .mixbar i:nth-child(2) { background:#8c6b2f; } .mixbar i:nth-child(3) { background:#3c3122; }
+  .mix ul { list-style:none; display:flex; gap:26px; flex-wrap:wrap; margin-top:16px; }
+  .mix li { font-size:12px; letter-spacing:.08em; display:flex; align-items:baseline; gap:8px; }
+  .mix li::before { content:""; width:9px; height:9px; background:#c9a45c; align-self:center; } .mix li:nth-child(2)::before { background:#8c6b2f; } .mix li:nth-child(3)::before { background:#3c3122; }
+  .mix li b { font-family:var(--serif); font-weight:500; font-size:22px; } .mix li em { font-style:normal; opacity:.6; }
+
+  /* ---- investment ---- */
+  .metrics { display:grid; grid-template-columns:repeat(4, 1fr); gap:0 34px; margin-top:50px; }
+  .metrics div { padding:22px 0 26px; border-top:1px solid rgba(255,255,255,.22); }
+  .metrics span { display:block; font-size:10.5px; letter-spacing:.24em; text-transform:uppercase; opacity:.7; }
+  .metrics b { display:block; margin-top:12px; font-family:var(--serif); font-weight:400; font-size:clamp(26px, 3vw, 44px); line-height:1.05; }
+  .metrics .hi b { color:var(--gold-hi); font-size:clamp(40px, 5vw, 76px); }
+  .metrics small { font-family:var(--sans); font-size:.36em; letter-spacing:.14em; opacity:.7; margin-left:.4em; }
+  .lab { display:grid; grid-template-columns:.8fr 1.2fr; gap:clamp(24px, 5vw, 80px); margin-top:54px; align-items:start; }
+  .lab h3 { font-size:11px; font-weight:400; letter-spacing:.3em; text-transform:uppercase; color:var(--gold-hi); margin-bottom:22px; }
+  .knob { margin-bottom:22px; }
+  .knob label { display:flex; justify-content:space-between; font-size:11px; letter-spacing:.2em; text-transform:uppercase; margin-bottom:10px; }
+  .knob label b { font-weight:400; color:var(--gold-hi); letter-spacing:.08em; }
+  .knob input { width:100%; accent-color:var(--gold); }
+  #chart { width:100%; height:auto; display:block; overflow:visible; }
+  #chart text { fill:#fff; font-family:Jost, sans-serif; font-size:11px; letter-spacing:.08em; }
+  .bars { display:grid; grid-template-columns:1fr 1fr; gap:clamp(24px, 5vw, 80px); margin-top:50px; }
+  .bars h3 { font-size:11px; font-weight:400; letter-spacing:.3em; text-transform:uppercase; color:#8c6b2f; margin-bottom:20px; }
+  .bar { display:grid; grid-template-columns:minmax(120px, 32%) 1fr auto; gap:14px; align-items:center; padding:11px 0; border-bottom:1px solid rgba(29,26,20,.16); font-size:13px; }
+  .bar i { display:block; height:10px; background:#b9b2a2; transform-origin:left; transform:scaleX(0); transition:transform 1.3s cubic-bezier(.2,.7,.2,1); }
+  body.ar .bar i { transform-origin:right; }
+  .in .bar i, .bars.in .bar i { transform:scaleX(var(--w)); }
+  .bar.me { font-weight:500; } .bar.me i { background:var(--gold); height:14px; }
+  .bar em { font-style:normal; letter-spacing:.06em; white-space:nowrap; }
+
+  /* over the light sections the header turns dark */
+  nav { transition:color .4s; }
+  body.onlight nav { color:#1d1a14; text-shadow:none; }
+  body.onlight #lang { color:#1d1a14; border-color:rgba(29,26,20,.5); }
+
+  @media (max-width:860px) {
+    #numbers .wrap, #reach .wrap, .lab, .bars { grid-template-columns:1fr; } .metrics { grid-template-columns:1fr 1fr; } #numbers model-viewer { height:56vh; }
+    .cards { flex-direction:column; height:auto; } .card { flex:none !important; height:38vh; }
+    .collage { grid-template-columns:1fr 1fr; grid-auto-rows:26vh; } .frame { grid-column:span 1 !important; grid-row:span 1 !important; } .frame.w, .frame.f { grid-column:span 2 !important; }
+    .contact { flex-direction:column; } .contact .who { width:100%; height:46vh; }
+  }
+
+  /* opening screen */
+  #loader { position:fixed; inset:0; z-index:20; background:var(--night); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; transition:opacity 1.2s, visibility 1.2s; }
+  #loader.done { opacity:0; visibility:hidden; }
+  #loader .logo { font-family:"Cormorant Garamond", serif; font-size:clamp(26px, 4vw, 44px); letter-spacing:.3em; text-align:center; line-height:1.3; }
+  #loader .logo small { display:block; font-family:Jost, sans-serif; font-size:10px; letter-spacing:.6em; color:var(--gold-hi); }
+  #loader .line { width:min(240px, 50vw); height:1px; background:rgba(255,255,255,.18); overflow:hidden; }
+  #loader .line i { display:block; height:100%; background:var(--gold-hi); transform-origin:left; transform:scaleX(0); transition:transform .5s; }
+
+  @media (max-width:1250px) { .note { bottom:9vh; } }
+  @media (max-width:860px) {
+    nav { padding:16px 18px; gap:12px; } nav a:not(.cta) { display:none; } .cta { padding:9px 12px; font-size:9px; }
+    #final { inset:auto 18px 12vh 18px; flex-direction:column; align-items:flex-start; } #final h3, #final .btns { text-align:left; } .ghost { margin:0 8px 0 0; }
+    #hint { display:none; } .note { left:18px; bottom:8vh; } #measure .tag { font-size:9px; letter-spacing:.12em; } #mFloors b { width:52px; height:52px; font-size:24px; }
+    #reel { right:14px; top:auto; bottom:12vh; transform:none; height:30vh; } #reel figcaption { font-size:8.5px; padding:24px 9px 9px; }
+    #chapters { gap:14px; font-size:8px; letter-spacing:.14em; } #chapters button:not(.on) span { display:none; } #chapters button:not(.on)::before { content:"·"; }
+    .pin b { font-size:9.5px; padding:4px 8px; }
+  }
+</style>
+</head>
+<body class="loading">
+
+<div id="loader"><div class="logo">WEST BAY<small>TOWER · DOHA</small></div><div class="line"><i></i></div></div>
+
+<nav>
+  <div class="logo">WEST BAY<small>TOWER · DOHA</small></div>
+  <a href="#numbers" data-k="nav1">The Asset</a><a href="#returns" data-k="nav2">Returns</a><a href="#compare" data-k="nav3">Comparison</a><a href="#address" data-k="nav4">Location</a>
+  <button id="lang">عربي</button>
+  <a class="cta" href="#enquire" data-k="cta">Request the full file</a>
+</nav>
+
+<div id="track">
+  <div id="stage">
+    <!-- (switched off: the approach film, cine/c_0001.jpg … — set CINE_COUNT and T.cineEnd to bring it back) -->
+    <canvas id="cine"></canvas>
+    <!-- 3 · the facade render; scroll rises from the entrance to the roof -->
+    <img id="facade" src="concept/tower-C.jpg" alt="West Bay Tower concept visual">
+    <!-- 1 · one continuous camera move from space down to the bay and the tower: satellite imagery on a globe by day,
+         settling into a night map drawn in the project's own palette (real map data, labels removed, our own pins) -->
+    <div id="map"></div>
+    <div id="wipe"></div>
+
+    <div class="caption" data-in=".019" data-out=".185"><h2 data-k="c1">ONE ADDRESS ON EARTH.</h2><p data-k="c1s">Doha · Qatar</p></div>
+    <div class="caption" data-in=".227" data-out=".31"><h2 data-k="c2">THE BAY, ALL AROUND YOU.</h2><p data-k="c2s">Doha's waterfront</p></div>
+    <div class="caption" data-in=".359" data-out=".453"><h2 data-k="c3">THE PEARL &amp; KATARA.</h2><p data-k="c3s">To the north</p></div>
+    <div class="caption" data-in=".494" data-out=".595"><h2 data-k="c4">THE CORNICHE. THE MUSEUMS. THE OLD PORT.</h2><p data-k="c4s">To the south</p></div>
+    <div class="caption" data-in=".615" data-out=".661"><h2 data-k="c5">AND AT THE HEART OF IT — WEST BAY.</h2></div>
+    <div class="caption" data-in=".668" data-out=".72"><h2 data-k="c6">RISING ABOVE THE BAY.</h2><p data-k="c6s">West Bay Tower</p></div>
+    <div class="caption" data-in=".914" data-out=".975"><h2 data-k="c7">EVERYTHING WITHIN REACH.</h2></div>
+
+    <div id="reel"></div>
+
+    <div id="measure">
+      <svg><line class="m s-floors" id="mPole"/><path class="m s-floors" id="mTicks"/><path class="m s-plot" id="mBracket"/><line class="m s-podium" id="mLead1"/><line class="m s-base" id="mLead2"/></svg>
+      <div class="tag m s-floors" id="mFloors"><b id="hudNum">0</b><span data-k="h1">Residential<br>floors</span></div>
+      <div class="tag m s-podium" id="mPodium" data-k="h2">Ground floor + Mezzanine</div>
+      <div class="tag m s-base" id="mBase" data-k="h3">3 basement levels ↓</div>
+      <div class="tag m s-plot" id="mPlot" data-k="h4">Plot · 2,000 m²</div>
+    </div>
+
+    <div id="chapters"></div>
+    <div id="hint" data-k="hint">Scroll ↓</div>
+    <div class="note" id="concept" data-k="note">CONCEPT VISUAL · FOR ILLUSTRATION ONLY</div>
+  </div>
+</div>
+<div class="marquee"><div id="marquee"></div></div>
+
+<section class="sec light" id="numbers"><div class="wrap">
+  <div>
+    <p class="eyebrow rise" data-k="s1e">The Tower</p>
+    <h2 class="rise d1" data-k="s1h">A whole tower. Forty-four residential floors.</h2>
+    <div class="stats">
+      <div class="rise d1"><b data-count="44">0</b><span data-k="s1a">Residential floors</span></div>
+      <div class="rise d2"><b data-count="228">0</b><span data-k="s1b">Apartments</span></div>
+      <div class="rise d2"><b data-count="3">0</b><span data-k="s1c">Basement levels</span></div>
+      <div class="rise d3"><b data-count="2000">0</b><span data-k="s1d">m² plot</span></div>
+    </div>
+    <div class="mix rise d3"><h3 data-k="x0">Apartment mix</h3><div class="mixbar" id="mixBar"></div><ul id="mixList"></ul></div>
+  </div>
+  <div class="rise d2">
+    <model-viewer src="concept/tower-web.glb" loading="lazy" camera-controls disable-zoom auto-rotate rotation-per-second="14deg" interaction-prompt="none"
+                  environment-image="neutral" shadow-intensity="1" shadow-softness=".9" exposure="1.05" camera-orbit="35deg 78deg auto"></model-viewer>
+    <p class="fine" data-k="s1n">Concept visual · drag to rotate</p>
+  </div>
+</div></section>
+
+<section class="sec dark" id="returns"><div class="wrap">
+  <p class="eyebrow rise" data-k="r0">The Investment</p>
+  <h2 class="rise d1" data-k="r1">The price, against what it earns.</h2>
+  <div class="metrics rise d2">
+    <div class="hi"><span data-k="m5">Net yield</span><b id="vNet">—</b></div>
+    <div class="hi"><span data-k="m3">Net annual income</span><b id="vNoi">—</b></div>
+    <div><span data-k="m1">Asking price</span><b id="vPrice">—</b></div>
+    <div><span data-k="m6">Payback</span><b id="vPay">—</b></div>
+    <div><span data-k="m8">Average price per apartment</span><b id="vUnit">—</b></div>
+    <div><span data-k="m9">Average net income per apartment</span><b id="vUnitNoi">—</b></div>
+    <div><span data-k="m10">Net income over 5 years</span><b id="v5">—</b></div>
+    <div><span data-k="m11">Apartments</span><b id="vUnits">—</b></div>
+  </div>
+  <div class="lab rise d2">
+    <div>
+      <h3 data-k="kh">Test the assumptions</h3>
+      <div class="knob"><label><span data-k="k1">Price</span><b id="oPrice"></b></label><input type="range" id="kPrice" min="-20" max="20" step="1" value="0"></div>
+      <div class="knob"><label><span data-k="k3">Net income</span><b id="oRent"></b></label><input type="range" id="kRent" min="-20" max="20" step="1" value="0"></div>
+      <div class="knob"><label><span data-k="k4">Yearly income growth</span><b id="oGrow"></b></label><input type="range" id="kGrow" min="0" max="6" step=".5"></div>
+    </div>
+    <div>
+      <h3 data-k="ch">Cumulative net income against the price</h3>
+      <svg id="chart" viewBox="0 0 640 300"></svg>
+    </div>
+  </div>
+  <p class="fine" data-k="rn">Net annual income is approximate. Forward projections are estimates, not a guarantee.</p>
+</div></section>
+
+<section class="sec light" id="compare"><div class="wrap">
+  <p class="eyebrow rise" data-k="q0">Comparison</p>
+  <h2 class="rise d1" data-k="q1">How it stands against the alternatives.</h2>
+  <div class="bars rise d2"><div><h3 data-k="q2">Net yield</h3><div id="barsYield"></div></div><div><h3 data-k="q3">Average price per apartment</h3><div id="barsM2"></div></div></div>
+</div></section>
+
+<section class="sec dark" id="address"><div class="wrap">
+  <p class="eyebrow rise" data-k="s2e">The Address</p>
+  <h2 class="rise d1" data-k="s2h">West Bay, with the whole bay at your door.</h2>
+  <div class="cards rise d2" id="cards"></div>
+</div></section>
+
+<section class="sec light" id="reach"><div class="wrap">
+  <div>
+    <p class="eyebrow rise" data-k="s3e">Connections</p>
+    <h2 class="rise d1" data-k="s3h">Everything within reach.</h2>
+    <p class="fine rise d2" data-k="s3n">Approximate drive times from West Bay in free-flowing traffic.</p>
+  </div>
+  <ul id="reachList" class="rise d2"></ul>
+</div></section>
+
+<section class="sec dark" id="worlds"><div class="wrap">
+  <p class="eyebrow rise" data-k="s4e">The Idea</p>
+  <h2 class="rise d1" data-k="s4h">Where three worlds meet.</h2>
+  <div id="rings"><span data-k="s4a">The Bay</span><span data-k="s4b">The City</span><span data-k="s4c">The Home</span><strong data-k="s4d">WEST BAY TOWER</strong></div>
+</div></section>
+
+<section class="sec light" id="inside"><div class="wrap">
+  <p class="eyebrow rise" data-k="s5e">Inside</p>
+  <h2 class="rise d1" data-k="s5h">Finished and furnished.</h2>
+  <div class="collage rise d2" id="gallery"></div>
+</div></section>
+<div id="lightbox"><img alt=""><p></p></div>
+
+<section class="sec dark" id="enquire"><div class="wrap">
+  <p class="eyebrow rise" data-k="s6e">Enquire</p>
+  <h2 class="rise d1" data-k="s6h">Let's talk numbers.</h2>
+  <div class="contact rise d2">
+    <img class="who" src="brand/lina.jpg" alt="Lina">
+    <div class="biz">
+      <img class="mark" src="brand/artlink-symbol.png" alt="Artlink Real Estate">
+      <h3 data-k="l1">Lina</h3>
+      <p class="role" data-k="l2">Artlink's virtual property presenter</p>
+      <p class="say" data-k="l3">The full investment file is shared on request.</p>
+      <p class="btns"><a class="cta" href="https://wa.me/97472258899" target="_blank" rel="noopener" data-k="l4">WhatsApp</a><a class="ghost" href="tel:+97472258899" dir="ltr">+974 7225 8899</a></p>
+      <a class="site" href="https://www.artlinkrealestat.com" target="_blank" rel="noopener">artlinkrealestat.com</a>
+    </div>
+  </div>
+  <footer><span>West Bay Tower · Doha</span><span data-k="s6p">Presented by Artlink Real Estate</span></footer>
+</div></section>
+
+<div id="bar"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Scroll timeline (0→1):  space → globe dive → landmarks → tower rises → approach film → facade rise → final panel
+// ---------------------------------------------------------------------------
+const T = { mapEnd: 1, cineEnd: 1, facadeEnd: 1, after: false };   // the journey is the map only; it ends on the arcs shot and the page scrolls on
+const BAY = .22;                                                // share of the map act spent flying in from space
+const WIPE = .028;                                              // length of the gold-line transition between acts
+const CINE_COUNT = 0;                                             // frames in cine/ (ffmpeg -i film.mp4 -vf "fps=20,scale=1600:-2" -q:v 5 cine/c_%04d.jpg)
+const FLOORS = 44, PLOT_AREA = 2000;                            // residential floors · plot in m²
+const PODIUM_H = 9, FLOOR_H = 3.8;                              // drawn heights in metres — visual only, not quoted anywhere
+
+// Where the tower is drawn: a point in the middle of West Bay — deliberately NOT the real plot.
+const TOWER = [51.5300, 25.3225];
+// Landmarks: [longitude, latitude, [name EN, AR], [subtitle EN, AR], label side, appears at (0→1 once the camera has reached the bay), drive in minutes]
+// Drive times: routed by road from the tower point (OSRM / OpenStreetMap, free-flowing traffic), rounded to the minute.
+const PLACES = [
+  [51.5510, 25.3690, ['THE PEARL', 'اللؤلؤة'],                         ['Marinas · Dining', 'مراسٍ · مطاعم'],              'r', .165, 11],
+  [51.5257, 25.3606, ['KATARA', 'كتارا'],                              ['Cultural Village', 'الحي الثقافي'],               'l', .205, 7],
+  [51.5205, 25.3040, ['THE CORNICHE', 'الكورنيش'],                     ['Waterfront promenade', 'ممشى الواجهة البحرية'],   'l', .33, 3],
+  [51.5165, 25.2975, ['AL BIDDA PARK', 'حديقة البدع'],                 ['', ''],                                           'l', .36, 6],
+  [51.5325, 25.2876, ['SOUQ WAQIF', 'سوق واقف'],                       ['', ''],                                           'l', .385, 7],
+  [51.5393, 25.2953, ['MUSEUM OF ISLAMIC ART', 'متحف الفن الإسلامي'],  ['', ''],                                           'r', .40, 9],
+  [51.5497, 25.2985, ['OLD DOHA PORT', 'ميناء الدوحة القديم'],         ['Mina District', 'حي الميناء'],                    'r', .425, 12],
+];
+// Footage cards: [clip in reels/, [caption EN, AR], shown from, shown until (0→1 once the camera has reached the bay)]
+const REELS = [
+  ['pearl',     ['The Pearl', 'اللؤلؤة'],                          .175, .305],
+  ['souq',          ['Souq Waqif', 'سوق واقف'],                        .37,  .428],
+  ['mia',           ['Museum of Islamic Art', 'متحف الفن الإسلامي'],   .428, .485],
+  ['westbay-1',     ['West Bay', 'الخليج الغربي'],                     .50,  .525],
+  ['westbay-2',     ['West Bay · The Corniche', 'الخليج الغربي · الكورنيش'], .525, .55],
+  ['westbay-night', ['West Bay · By night', 'الخليج الغربي · ليلًا'],  .55,  .575],
+];
+// Phases of the bay part (0→1): the landmark tour, then the tower takes the screen and one fact arrives per scroll step
+// (plot → basements → podium → the floors going up → lights on), then arcs fly out to every landmark.
+const PH = { tourEnd: .51, glow: [.50, .585], alone: [.57, .87], plot: .595, base: .635, podium: .67, rise: [.705, .825], out: [.86, .88], arcs: .875, arcStep: .008, arcLen: .025 };
+// Camera keyframes: [progress, longitude, latitude, zoom, pitch, bearing]
+const SPACECAM = [[0, 40, 17, 2.15, 0, 0], [.03, 41, 18, 2.2, 0, 0]];          // then one long dive to the first bay keyframe
+const BAYCAM = [[0, 51.560, 25.327, 11.7, 0, 0], [.115, 51.556, 25.327, 12.0, 15, 0], [.215, 51.545, 25.364, 13.1, 45, -14], [.29, 51.542, 25.363, 13.3, 48, -6],
+                [.385, 51.531, 25.300, 13.2, 46, 14], [.47, 51.537, 25.297, 13.4, 50, 24], [.54, TOWER[0], TOWER[1] - .001, 13.6, 42, 4],
+                // the tower scene: close in, then a slow quarter-orbit. A 7th value marks these stops: the zoom is then worked out
+                // so the full tower fills a little under half the screen height, and the value is how far below centre its base sits.
+                [.61, TOWER[0], TOWER[1], 17, 58, -32, .15], [.85, TOWER[0], TOWER[1], 17, 62, 34, .15],
+                [.905, 51.536, 25.327, 12.5, 48, -8], [1, 51.535, 25.327, 12.8, 52, 2]];
+const MAPCAM = [...SPACECAM, ...BAYCAM.map(([m, ...rest]) => [BAY + (1 - BAY) * m, ...rest])];
+// Chapters on the rail: [scroll position, EN, AR]
+const CHAPTERS = [[0, 'The World', 'العالم'], [.237, 'The Bay', 'الخليج'], [.71, 'The Tower', 'البرج'], [.925, 'Connections', 'القرب من كل شيء'], ['#numbers', 'Discover', 'اكتشف']];
+// Arabic text for every element marked data-k (English lives in the markup)
+const AR = {
+  nav1: 'الأصل', nav2: 'العوائد', nav3: 'المقارنة', nav4: 'الموقع', cta: 'اطلب الملف الكامل', hint: 'مرّر للأسفل ↓',
+  c1: 'عنوان واحد على هذه الأرض.', c1s: 'الدوحة · قطر', c2: 'الخليج من حولك.', c2s: 'واجهة الدوحة البحرية', c3: 'اللؤلؤة وكتارا.', c3s: 'شمالًا',
+  c4: 'الكورنيش. المتاحف. الميناء القديم.', c4s: 'جنوبًا', c5: 'وفي قلب كل ذلك — الخليج الغربي.', c6: 'يرتفع فوق الخليج.', c6s: 'برج الخليج الغربي',
+  c7: 'كل شيء على مقربة منك.', c8: 'برج رُسم ليكمّل الأفق.', c9: 'الوصول، بمعنى جديد.', c10: 'كل طابق، عالم خاص.', c11: 'الخليج، في إطار صُمّم لك.',
+  h1: 'طابقًا<br>سكنيًا', h2: 'أرضي + ميزانين', h3: '3 طوابق سفلية ↓', h4: 'مساحة الأرض · 2,000 م²',
+  s1e: 'البرج', s1h: 'برج كامل. أربعة وأربعون طابقًا سكنيًا.', s1a: 'طابقًا سكنيًا', s1b: 'شقة', s1c: 'طوابق سفلية', s1d: 'م² مساحة الأرض', s1n: 'تصوّر فني · اسحب للتدوير',
+  s2e: 'العنوان', s2h: 'الخليج الغربي، والخليج كلّه عند بابك.', s3e: 'القرب من كل شيء', s3h: 'كل شيء على مقربة منك.', s3n: 'أوقات القيادة تقريبية من الخليج الغربي في حركة مرور سلسة.',
+  s4e: 'الفكرة', s4h: 'حيث تلتقي ثلاثة عوالم.', s4a: 'الخليج', s4b: 'المدينة', s4c: 'البيت', s4d: 'برج الخليج الغربي',
+  s5e: 'من الداخل', s5h: 'جاهز ومفروش.',
+  l1: 'لينا', l2: 'المقدّمة الافتراضية للعقارات من أرت لينك', l3: 'الملف الاستثماري الكامل يُرسل عند الطلب.', l4: 'واتساب',
+  r0: 'الاستثمار', r1: 'السعر، في مقابل ما يدرّه.', rn: 'صافي الدخل السنوي تقريبي. التوقعات المستقبلية تقديرية وليست ضمانًا.',
+  m1: 'السعر المطلوب', m3: 'صافي الدخل السنوي', m5: 'العائد الصافي', m6: 'فترة الاسترداد', m8: 'متوسط سعر الشقة', m9: 'متوسط صافي دخل الشقة', m10: 'صافي الدخل خلال 5 سنوات', m11: 'عدد الشقق', yrs: 'سنة', mo: 'شهريًا', yr: 'سنويًا', x0: 'توزيع الشقق',
+  k1: 'السعر', k3: 'صافي الدخل', k4: 'النمو السنوي للدخل', kh: 'جرّب الافتراضات', ch: 'الدخل الصافي المتراكم مقابل السعر', cb: 'استرداد رأس المال', cy: 'السنة',
+  q0: 'المقارنة', q1: 'كيف يقف أمام البدائل.', q2: 'العائد الصافي', q3: 'متوسط سعر الشقة', qe: 'تُضاف المقارنات هنا عند توفر أرقامها.', this: 'هذا البرج',
+  s6e: 'تواصل', s6h: 'لنتحدث بالأرقام.', s6p: 'تقديم أرت لينك العقارية', yours: 'عنوانك',
+  f1: 'الموقع', f1v: 'الخليج الغربي، الدوحة', f2: 'الطوابق السكنية', f3: 'القاعدة', f3v: 'أرضي + ميزانين', f4: 'الطوابق السفلية', f4v: '3 طوابق', f5: 'مساحة الأرض', f5v: '2,000 م²',
+  f6: 'برج الخليج الغربي<br>حياة فوق الأفق.', f7: 'استكشف المجسّم', note: 'تصوّر فني · لأغراض التوضيح فقط', home: 'برج الخليج الغربي', min: 'دقيقة',
+};
+
+const $ = s => document.querySelector(s);
+const arMin = n => n >= 3 && n <= 10 ? 'دقائق' : AR.min;        // Arabic plural: 3–10 take «دقائق»
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = t => t * t * (3 - 2 * t);
+const span = (p, a, b) => ease(clamp((p - a) / (b - a)));     // 0→1 as p goes a→b
+const mix = (a, b, t) => a + (b - a) * t;
+
+const track = $('#track'), cine = $('#cine'), ctx = cine.getContext('2d'), facade = $('#facade'), map = $('#map'), wipe = $('#wipe');
+const captions = [...document.querySelectorAll('.caption')];
+let target = 0, p = -1, lang = 0;                               // lang: 0 = English, 1 = Arabic
+
+// ---- Act 1: from space to the bay, on one live map ------------------------------
+const mapgl = new maplibregl.Map({ container: 'map', style: 'https://tiles.openfreemap.org/styles/liberty', interactive: false,
+  center: [MAPCAM[0][1], MAPCAM[0][2]], zoom: MAPCAM[0][3], maxPitch: 60, attributionControl: { compact: true } });
+let mapReady = false, cityDim = null, towerLit = null, shownFloors = -1;
+const M_LAT = 111320, M_LNG = M_LAT * Math.cos(TOWER[1] * Math.PI / 180);       // metres per degree here
+const square = (side, turn = 18) => {                           // a square of `side` metres around the tower point
+  const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]].map(([x, y]) => {
+    const a = turn * Math.PI / 180, ex = (x * Math.cos(a) - y * Math.sin(a)) * side / 2, ny = (x * Math.sin(a) + y * Math.cos(a)) * side / 2;
+    return [TOWER[0] + ex / M_LNG, TOWER[1] + ny / M_LAT];
+  });
+  return { type: 'Polygon', coordinates: [pts] };
+};
+const arc = ([lng, lat], f) => {                                // curved line from the tower to a place, drawn up to fraction f
+  const dx = lng - TOWER[0], dy = lat - TOWER[1], cx = TOWER[0] + dx / 2 - dy * .22, cy = TOWER[1] + dy / 2 + dx * .22, pts = [];
+  for (let i = 0, n = Math.max(1, Math.round(40 * f)); i <= n; i++) {
+    const t = i / n * f, u = 1 - t;
+    pts.push([u * u * TOWER[0] + 2 * u * t * cx + t * t * lng, u * u * TOWER[1] + 2 * u * t * cy + t * t * lat]);
+  }
+  return pts;
+};
+// The tower as a stack: podium, then one glass band + one stone slab per residential floor, then the roof and a beam of light.
+// `i` is the step at which each piece appears, so the building goes up floor by floor with the scroll.
+function towerPieces() {
+  const piece = (i, side, b, t, c, glass = false) => ({ type: 'Feature', properties: { i, b, t, c, glass }, geometry: square(side) });
+  const out = [piece(0, Math.sqrt(PLOT_AREA) * .9, 0, PODIUM_H, '#b7a077')];
+  for (let f = 1; f <= FLOORS; f++) {
+    const b = PODIUM_H + (f - 1) * FLOOR_H;
+    out.push(piece(f, 27, b, b + FLOOR_H - .7, '#5d4a36', true), piece(f, 30, b + FLOOR_H - .7, b + FLOOR_H, '#ead9b5'));
+  }
+  const top = PODIUM_H + FLOORS * FLOOR_H;
+  out.push(piece(FLOORS + 1, 22, top, top + 6, '#6b573f', true), piece(FLOORS + 1, 34, top + 6, top + 6.9, '#c9a45c'), piece(FLOORS + 2, 2, top + 7, top + 150, '#ffffff'));
+  return { type: 'FeatureCollection', features: out };
+}
+const pins = PLACES.map(([lng, lat, , , side]) => {
+  // MapLibre drives the marker element's own opacity, so ours lives on an inner element
+  const holder = document.createElement('div'), el = holder.appendChild(document.createElement('div')); el.className = 'pin ' + side;
+  new maplibregl.Marker({ element: holder, anchor: side === 'l' ? 'right' : 'left', offset: [side === 'l' ? 7 : -7, 0] }).setLngLat([lng, lat]).addTo(mapgl);
+  return el;
+});
+const home = document.createElement('div'); home.innerHTML = '<div class="pin home r"><i></i><b></b></div>';
+new maplibregl.Marker({ element: home, anchor: 'left', offset: [-8, 0] }).setLngLat(TOWER).addTo(mapgl);
+
+// Screen position of a point `h` metres above the ground, `east`/`north` metres from the tower.
+// The camera is rebuilt from the map's centre, zoom, pitch and bearing; a raised point then lands on screen
+// exactly where the ground point behind it (along the camera's line of sight) does.
+function onScreen(east, north, h) {
+  const c = mapgl.getCenter(), pitch = mapgl.getPitch() * Math.PI / 180, bear = mapgl.getBearing() * Math.PI / 180;
+  const mpp = 40075016.686 * Math.cos(c.lat * Math.PI / 180) / (512 * 2 ** mapgl.getZoom());      // metres per pixel
+  const dist = .5 * innerHeight / Math.tan(.5 * 36.87 * Math.PI / 180) * mpp;                       // camera to centre
+  const camH = dist * Math.cos(pitch), back = dist * Math.sin(pitch);
+  const camE = (c.lng - TOWER[0]) * M_LNG - Math.sin(bear) * back, camN = (c.lat - TOWER[1]) * M_LAT - Math.cos(bear) * back;
+  const k = camH / (camH - h);
+  return mapgl.project([TOWER[0] + (camE + (east - camE) * k) / M_LNG, TOWER[1] + (camN + (north - camN) * k) / M_LAT]);
+}
+const put = (el, pt, ax = 0, ay = -.5) => { el.style.transform = `translate(${pt.x}px, ${pt.y}px) translate(${ax * 100}%, ${ay * 100}%)`; };
+const seg = (el, a, b) => { el.setAttribute('x1', a.x); el.setAttribute('y1', a.y); el.setAttribute('x2', b.x); el.setAttribute('y2', b.y); };
+function drawMeasure(height) {                                  // height: how tall the tower stands right now, in metres
+  const bear = mapgl.getBearing() * Math.PI / 180, rx = Math.cos(bear), ry = -Math.sin(bear), fx = Math.sin(bear), fy = Math.cos(bear);
+  const side = Math.sqrt(PLOT_AREA) / 2, out = side + 8;
+  // height rule on the right of the tower, with a tick every five floors and the floor count riding on top
+  const foot = onScreen(rx * out, ry * out, 0), head = onScreen(rx * out, ry * out, Math.max(height, 1));
+  seg($('#mPole'), foot, head);
+  let ticks = `M${foot.x - 7} ${foot.y}h14M${head.x - 7} ${head.y}h14`;
+  for (let f = 5; f < FLOORS; f += 5) { const h = PODIUM_H + f * FLOOR_H; if (h < height) { const t = onScreen(rx * out, ry * out, h); ticks += `M${t.x - 4} ${t.y}h8`; } }
+  $('#mTicks').setAttribute('d', ticks);
+  put($('#mFloors'), { x: head.x + 14, y: head.y });
+  // plot bracket along the edge nearest the camera
+  const a = onScreen(-rx * side - fx * (side + 7), -ry * side - fy * (side + 7), 0), b = onScreen(rx * side - fx * (side + 7), ry * side - fy * (side + 7), 0);
+  $('#mBracket').setAttribute('d', `M${a.x} ${a.y - 7}v14M${a.x} ${a.y}L${b.x} ${b.y}M${b.x} ${b.y - 7}v14`);
+  put($('#mPlot'), { x: (a.x + b.x) / 2, y: Math.max(a.y, b.y) + 6 }, -.5, 0);
+  // tags on the left: the podium, and the basements below ground
+  const pod = onScreen(-rx * side * .9, -ry * side * .9, PODIUM_H / 2), podOut = { x: pod.x - 46, y: pod.y - 22 };
+  seg($('#mLead1'), pod, podOut); put($('#mPodium'), { x: podOut.x - 8, y: podOut.y }, -1);
+  const base = onScreen(-rx * side * .9, -ry * side * .9, 0), baseOut = { x: base.x - 46, y: base.y + 22 };
+  seg($('#mLead2'), base, baseOut); put($('#mBase'), { x: baseOut.x - 8, y: baseOut.y }, -1);
+}
+
+$('#reel').innerHTML = REELS.map(([clip]) => `<figure><video src="reels/${clip}.mp4" muted loop playsinline preload="metadata"></video><figcaption></figcaption></figure>`).join('');
+const reels = [...$('#reel').children];
+function showReels(bay) {
+  reels.forEach((fig, i) => {
+    const on = bay >= REELS[i][2] && bay < REELS[i][3], v = fig.firstChild;
+    if (on === fig.classList.contains('on')) return;
+    fig.classList.toggle('on', on);
+    if (on) v.play().catch(() => {}); else setTimeout(() => { if (!fig.classList.contains('on')) v.pause(); }, 900);
+  });
+}
+
+// gentle moving waves: a small tile redrawn continuously and used as the water fill pattern
+const wave = Object.assign(document.createElement('canvas'), { width: 128, height: 64 }), wctx = wave.getContext('2d', { willReadFrequently: true });
+function waveTile(time) {
+  wctx.fillStyle = '#0a3344'; wctx.fillRect(0, 0, 128, 64);
+  for (const [y0, amp, speed, alpha] of [[14, 3, 1, .34], [36, 2.4, -.7, .24], [54, 2, 1.4, .18]]) {
+    wctx.beginPath();
+    for (let x = 0; x <= 128; x += 4) wctx.lineTo(x, y0 + Math.sin((x / 128) * Math.PI * 4 + time * speed) * amp);
+    wctx.strokeStyle = `rgba(150,205,220,${alpha})`; wctx.lineWidth = 1.2; wctx.stroke();
+  }
+  return wctx.getImageData(0, 0, 128, 64);
+}
+// repaint the stock map in the project's palette: night-blue land and sea, gold roads, slate glass towers, no labels
+function restyle() {
+  const set = (id, prop, v) => { try { mapgl.setPaintProperty(id, prop, v); } catch (e) {} };
+  const LAND = { park: '#10262a', landcover: '#10242a', landuse: '#13212b', building: '#1c2c39', aeroway: '#172632', transportation: '#1a2a36' };
+  for (const l of mapgl.getStyle().layers) {
+    const src = l['source-layer'] || '', paint = l.paint || {};
+    if (l.type === 'symbol') mapgl.setLayoutProperty(l.id, 'visibility', 'none');           // drop every label and POI icon
+    else if (l.type === 'background') set(l.id, 'background-color', '#141c25');
+    else if (l.type === 'raster') set(l.id, 'raster-opacity', 0);
+    else if (l.type === 'fill-extrusion') { set(l.id, 'fill-extrusion-color', '#33475a'); set(l.id, 'fill-extrusion-opacity', .85); set(l.id, 'fill-extrusion-opacity-transition', { duration: 900 }); cityLayer = l.id; }
+    else if (l.type === 'fill') {
+      if (src === 'water') { set(l.id, 'fill-pattern', 'waves'); continue; }
+      if ('fill-pattern' in paint) set(l.id, 'fill-pattern', undefined);
+      set(l.id, 'fill-color', LAND[src] || '#141c25'); set(l.id, 'fill-outline-color', 'rgba(0,0,0,0)');
+    } else if (l.type === 'line') {
+      const major = /motorway|trunk|primary/.test(l.id), hide = src !== 'transportation' || /casing|rail|path|pedestrian|pier|bridge_.*casing/.test(l.id);
+      if ('line-pattern' in paint) set(l.id, 'line-pattern', undefined);
+      set(l.id, 'line-color', src === 'waterway' ? '#0a3344' : major ? '#e2bd72' : '#9c8250');
+      set(l.id, 'line-opacity', src === 'waterway' ? 1 : hide ? 0 : major ? .95 : .42);
+    }
+  }
+}
+let cityLayer = null;
+mapgl.on('style.load', () => {
+  mapgl.setProjection({ type: 'globe' });
+  mapgl.setSky({ 'sky-color': '#0a141c', 'horizon-color': '#1b2d3b', 'fog-color': '#0a141c', 'fog-ground-blend': .85, 'horizon-fog-blend': .5, 'sky-horizon-blend': .8, 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] });
+  mapgl.addImage('waves', waveTile(0));
+  restyle();
+  // daytime satellite imagery for the dive; each layer fades out as the camera gets closer, ending on the night map
+  mapgl.addSource('sat', { type: 'raster', tileSize: 256, maxzoom: 13, attribution: 'Sentinel-2 cloudless by EOX (Contains modified Copernicus Sentinel data 2016)',
+    tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg'] });
+  mapgl.addLayer({ id: 'sat', type: 'raster', source: 'sat', paint: { 'raster-fade-duration': 0, 'raster-saturation': -.2, 'raster-contrast': -.12,
+    'raster-brightness-max': ['interpolate', ['linear'], ['zoom'], 8.4, .82, 10.4, .3],          // dusk falls on the way down
+    'raster-opacity': ['interpolate', ['linear'], ['zoom'], 9.4, 1, 11, 0] } });
+  mapgl.addSource('earth', { type: 'raster', tileSize: 256, maxzoom: 8, attribution: 'NASA Blue Marble',
+    tiles: ['https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg'] });
+  mapgl.addLayer({ id: 'earth', type: 'raster', source: 'earth', paint: { 'raster-fade-duration': 0, 'raster-saturation': .15, 'raster-contrast': .1,
+    'raster-opacity': ['interpolate', ['linear'], ['zoom'], 4.5, 1, 6.5, 0] } });
+  mapgl.addSource('westbay', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Point', coordinates: TOWER } } });
+  mapgl.addLayer({ id: 'westbay', type: 'circle', source: 'westbay', paint: { 'circle-color': '#e8c987', 'circle-blur': .9, 'circle-opacity': 0,
+    'circle-opacity-transition': { duration: 900 }, 'circle-pitch-alignment': 'map',
+    'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 11, 22, 15, 350] } });
+  // the tower itself: plot outline on the ground, then the stack of floors
+  mapgl.addSource('plot', { type: 'geojson', data: { type: 'Feature', geometry: square(Math.sqrt(PLOT_AREA)) } });
+  mapgl.addLayer({ id: 'plot', type: 'line', source: 'plot', paint: { 'line-color': '#f0d9a4', 'line-width': 2.5, 'line-opacity': 0, 'line-opacity-transition': { duration: 600 } } });
+  mapgl.addSource('tower', { type: 'geojson', data: towerPieces() });
+  mapgl.addLayer({ id: 'tower', type: 'fill-extrusion', source: 'tower', filter: ['<', ['get', 'i'], 0],
+    paint: { 'fill-extrusion-color': ['get', 'c'], 'fill-extrusion-base': ['get', 'b'], 'fill-extrusion-height': ['get', 't'], 'fill-extrusion-opacity': 1, 'fill-extrusion-vertical-gradient': false, 'fill-extrusion-color-transition': { duration: 1200 } } });
+  mapgl.addSource('arcs', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'MultiLineString', coordinates: [] } } });
+  mapgl.addLayer({ id: 'arcs-glow', type: 'line', source: 'arcs', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#e8c987', 'line-width': 8, 'line-blur': 7, 'line-opacity': .6 } });
+  mapgl.addLayer({ id: 'arcs', type: 'line', source: 'arcs', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#fff3d6', 'line-width': 1.8 } });
+  // behind the opening screen, visit every camera stop once so its map tiles are already there when the visitor arrives
+  const settle = ms => Promise.race([mapgl.once('idle'), new Promise(r => setTimeout(r, ms))]);
+  (async () => {
+    await settle(8000);
+    for (const [, lng, lat, zoom, pitch, bearing] of BAYCAM) { mapgl.jumpTo({ center: [lng, lat], zoom, pitch, bearing }); await settle(2500); }
+    mapReady = true; p = -1; drawMap(0); await settle(4000);
+    loaded('map');
+  })();
+  // keep the data credits folded into the small (i) button; a click on it opens and closes them
+  let creditsOpen = false;
+  $('#map .maplibregl-ctrl-attrib-button')?.addEventListener('click', () => { creditsOpen = !creditsOpen; });
+  setInterval(() => $('#map .maplibregl-ctrl-attrib')?.classList.toggle('maplibregl-compact-show', creditsOpen), 250);
+});
+function drawMap(m) {                                           // m: 0→1 through the map act
+  if (!mapReady) return;
+  let k = 0; while (k < MAPCAM.length - 2 && m > MAPCAM[k + 1][0]) k++;
+  const a = MAPCAM[k], b = MAPCAM[k + 1], t = span(m, a[0], b[0]);
+  const dive = a === SPACECAM[SPACECAM.length - 1];             // on the dive, lock onto Doha early so it stays in frame
+  const tc = dive ? 1 - Math.pow(1 - t, 5) : t, tz = dive ? (t * t * (3 - 2 * t) + t) / 2 : t;
+  const fit = Math.log2(Math.min(innerWidth, 1600) / 1280) * (dive ? t : k ? 1 : 0);       // same framing on small and large screens
+  const M_EQ = 40075016.686 * Math.cos(TOWER[1] * Math.PI / 180) / 512, towerTop = PODIUM_H + FLOORS * FLOOR_H + 7;
+  const zoomOf = kf => kf[6] ? Math.log2(M_EQ * .4 * innerHeight / (towerTop * Math.sin(kf[4] * Math.PI / 180))) : kf[3] + fit;
+  const zoom = mix(zoomOf(a), zoomOf(b), tz), pitch = mix(a[4], b[4], t), bearing = mix(a[5], b[5], t), rad = bearing * Math.PI / 180;
+  const aim = mix(a[6] || 0, b[6] || 0, t) * innerHeight * (M_EQ / 2 ** zoom) / Math.cos(pitch * Math.PI / 180);   // metres to look past the tower
+  mapgl.jumpTo({ center: [mix(a[1], b[1], tc) + Math.sin(rad) * aim / M_LNG, mix(a[2], b[2], tc) + Math.cos(rad) * aim / M_LAT], zoom, pitch, bearing });
+
+  const bay = (m - BAY) / (1 - BAY);                            // progress once the camera has reached the bay
+  const rise = clamp((bay - PH.rise[0]) / (PH.rise[1] - PH.rise[0])), arcsOn = bay > PH.arcs;
+  const reach = PLACES.map((_, i) => span(bay, PH.arcs + i * PH.arcStep, PH.arcs + i * PH.arcStep + PH.arcLen));
+  pins.forEach((el, i) => {
+    el.classList.toggle('on', arcsOn ? reach[i] > .92 : bay > PLACES[i][5] && bay < PH.tourEnd);
+    el.classList.toggle('dist', arcsOn);
+  });
+  home.firstChild.classList.toggle('on', arcsOn);
+  showReels(bay);
+  mapgl.setPaintProperty('westbay', 'circle-opacity', bay > PH.glow[0] && bay < PH.glow[1] ? .7 : 0);
+  mapgl.setPaintProperty('plot', 'line-opacity', bay > PH.plot ? 1 : 0);
+  const dim = bay > PH.alone[0] && bay < PH.alone[1];           // the neighbouring towers step aside: for this scene ours is the only one standing
+  if (dim !== cityDim && cityLayer) { cityDim = dim; mapgl.setPaintProperty(cityLayer, 'fill-extrusion-opacity', dim ? 0 : .85); }
+  const steps = bay < PH.podium ? -1 : Math.floor(rise * (FLOORS + 2.999));    // podium first, then 44 floors, roof, beam — one per step
+  if (steps !== shownFloors) { shownFloors = steps; mapgl.setFilter('tower', ['<=', ['get', 'i'], steps]); $('#hudNum').textContent = clamp(steps, 0, FLOORS); }
+  const lit = bay > PH.rise[1] + .005;                          // once it is topped out, the windows come on
+  if (lit !== towerLit) { towerLit = lit; mapgl.setPaintProperty('tower', 'fill-extrusion-color', lit ? ['case', ['get', 'glass'], '#ffd98a', ['get', 'c']] : ['get', 'c']); }
+  mapgl.getSource('arcs').setData({ type: 'Feature', geometry: { type: 'MultiLineString', coordinates: PLACES.map((pl, i) => reach[i] > 0 ? arc(pl, reach[i]) : null).filter(Boolean) } });
+  const show = bay > PH.plot - .01 ? 1 - span(bay, ...PH.out) : 0;
+  $('#measure').style.opacity = show;
+  if (show > 0) {
+    const top = PODIUM_H + FLOORS * FLOOR_H;
+    drawMeasure(steps < 0 ? 0 : steps === 0 ? PODIUM_H : steps <= FLOORS ? PODIUM_H + steps * FLOOR_H : top + 6.9);
+    // one fact per scroll step, each staying on once it has arrived
+    for (const [cls, at] of [['plot', PH.plot + .008], ['base', PH.base], ['podium', PH.podium + .004], ['floors', PH.rise[0] - .012]])
+      document.querySelectorAll('#measure .s-' + cls).forEach(el => el.classList.toggle('on', bay > at));
+  }
+}
+setInterval(() => { if (mapReady && scrollY < track.offsetHeight) mapgl.updateImage('waves', waveTile(performance.now() / 900)); }, 60);
+
+// ---- Act 2: the approach film (image sequence) ---------------------------------------
+const frames = [];
+for (let i = 1; i <= CINE_COUNT; i++) {
+  const im = new Image(); im.src = `cine/c_${String(i).padStart(4, '0')}.jpg`;
+  im.onload = () => { p = -1; if (i === Math.min(CINE_COUNT, 24)) loaded('film'); };
+  frames.push(im);
+}
+function drawCine(t) {
+  if (!CINE_COUNT) return;
+  let i = Math.round(t * (CINE_COUNT - 1));
+  while (i > 0 && !(frames[i].complete && frames[i].naturalWidth)) i--;  // fall back to nearest loaded frame
+  const im = frames[i]; if (!im.naturalWidth) return;
+  const w = Math.round(innerWidth * devicePixelRatio), h = Math.round(innerHeight * devicePixelRatio);
+  if (cine.width !== w || cine.height !== h) { cine.width = w; cine.height = h; }
+  const s = Math.max(w / im.naturalWidth, h / im.naturalHeight);         // object-fit: cover
+  ctx.drawImage(im, (w - im.naturalWidth * s) / 2, (h - im.naturalHeight * s) / 2, im.naturalWidth * s, im.naturalHeight * s);
+}
+
+// ---- Opening screen: wait for the globe imagery and the first frames of the film --------
+const need = new Set(CINE_COUNT ? ['map', 'film'] : ['map']), total = need.size;
+function loaded(what) {
+  if (!need.delete(what)) return;
+  $('#loader .line i').style.transform = `scaleX(${1 - need.size / total})`;
+  if (!need.size) setTimeout(() => { map.classList.add('ready'); $('#loader').classList.add('done'); document.body.classList.remove('loading'); }, 500);
+}
+setTimeout(() => [...need].forEach(loaded), 20000);            // never leave a visitor stuck on the opening screen
+
+// ---- Language -----------------------------------------------------------------------------
+const EN = {}; document.querySelectorAll('[data-k]').forEach(el => { EN[el.dataset.k] = el.innerHTML; });
+function setLang(l) {
+  lang = l; document.body.classList.toggle('ar', !!l); $('#lang').textContent = l ? 'EN' : 'عربي';
+  document.querySelectorAll('[data-k]').forEach(el => { el.innerHTML = l ? AR[el.dataset.k] : EN[el.dataset.k]; });
+  pins.forEach((el, i) => {
+    const [, , name, sub] = PLACES[i];
+    el.innerHTML = `<i></i><b>${name[l]}${sub[l] ? `<small>${sub[l].toUpperCase()}</small>` : ''}<em>≈ ${PLACES[i][6]} ${l ? arMin(PLACES[i][6]) : 'MIN'}</em></b>`;
+  });
+  home.querySelector('b').textContent = l ? AR.home : 'WEST BAY TOWER';
+  reels.forEach((fig, i) => { fig.lastChild.textContent = REELS[i][1][l]; });
+  $('#chapters').innerHTML = CHAPTERS.map(c => `<button><span>${c[1 + l]}</span></button>`).join('');
+  [...$('#chapters').children].forEach((b, i) => { b.onclick = () => typeof CHAPTERS[i][0] === 'string' ? $(CHAPTERS[i][0]).scrollIntoView({ behavior: 'smooth' }) : scrollTo({ top: CHAPTERS[i][0] * scrollMax(), behavior: 'smooth' }); });
+  renderSections(l); renderDeal();
+  p = -1;
+}
+$('#lang').onclick = () => setLang(1 - lang);
+
+// ---- The investment case ------------------------------------------------------------------
+// EVERY FIGURE ON THE ASSET, RETURNS AND COMPARISON SECTIONS COMES FROM HERE.
+const DEAL = {
+  currency: 'QAR',
+  price: 330000000,          // asking price for the whole tower
+  noi: 20500000,             // net income per year (approximate)
+  growth: 0,                 // yearly income growth assumed by default: none (income held flat)
+  // apartment mix: [[name EN, AR], count]
+  mix: [[['One bedroom + living', 'غرفة نوم وصالة'], 72], [['Two bedrooms + living', 'غرفتا نوم وصالة'], 144], [['Three bedrooms + living', 'ثلاث غرف نوم وصالة'], 12]],
+};
+DEAL.units = DEAL.mix.reduce((n, m) => n + m[1], 0);
+// What it is compared with: [[name EN, AR], net yield, price per apartment (or null)]. While this is empty the Comparison section stays hidden.
+const COMPS = [];
+const money = (v, unit = DEAL.currency) => v >= 1e6 ? (v / 1e6).toLocaleString('en', { maximumFractionDigits: 2 }) + '<small>M ' + unit + '</small>' : Math.round(v).toLocaleString('en') + '<small>' + unit + '</small>';
+const pct = v => (v * 100).toFixed(1) + '%';
+function deal() {                                               // the deal under the current slider positions
+  const price = DEAL.price * (1 + $('#kPrice').value / 100), noi = DEAL.noi * (1 + $('#kRent').value / 100), grow = $('#kGrow').value / 100;
+  return { price, noi, grow, net: noi / price };
+}
+function renderDeal() {
+  const d = deal(), l = lang, signed = v => (v > 0 ? '+' : '') + v + '%';
+  $('#vPrice').innerHTML = money(d.price); $('#vNoi').innerHTML = money(d.noi); $('#vNet').textContent = pct(d.net);
+  $('#vUnit').innerHTML = money(d.price / DEAL.units); $('#vUnits').textContent = DEAL.units;
+  $('#vUnitNoi').innerHTML = money(d.noi / DEAL.units, DEAL.currency + ' · ' + (l ? AR.yr : 'A YEAR')) + `<small style="display:block;margin:8px 0 0">≈ ${(Math.round(d.noi / DEAL.units / 12 / 100) * 100).toLocaleString('en')} ${DEAL.currency} · ${l ? AR.mo : 'A MONTH'}</small>`;
+  $('#oPrice').textContent = signed(+$('#kPrice').value); $('#oRent').textContent = signed(+$('#kRent').value); $('#oGrow').textContent = $('#kGrow').value + '%';
+  // projection: cumulative net income year by year against the price paid
+  const N = 20, L = 8, R = 632, T0 = 26, B = 262, cum = [0];
+  for (let y = 1; y <= N; y++) cum.push(cum[y - 1] + d.noi * Math.pow(1 + d.grow, y - 1));
+  const top = Math.max(cum[N], d.price) * 1.08, X = y => L + (R - L) * y / N, Y = v => B - (B - T0) * v / top;
+  const hit = cum.findIndex(v => v >= d.price), back = hit < 0 ? null : hit - 1 + (d.price - cum[hit - 1]) / (cum[hit] - cum[hit - 1]);
+  $('#v5').innerHTML = money(cum[5]);
+  // the headline payback is the same figure the chart marks, so the two can never disagree
+  $('#vPay').innerHTML = (back ? back.toFixed(1) : '20+') + `<small>${l ? AR.yrs : 'YEARS'}</small>`;
+  $('#chart').innerHTML = `
+    <path d="M${L} ${B}H${R}" stroke="rgba(255,255,255,.3)"/>
+    <path d="M${cum.map((v, y) => `${X(y)} ${Y(v)}`).join('L')}L${R} ${B}L${L} ${B}Z" fill="rgba(201,164,92,.16)"/>
+    <path d="M${cum.map((v, y) => `${X(y)} ${Y(v)}`).join('L')}" fill="none" stroke="#f0d9a4" stroke-width="2.5"/>
+    <path d="M${L} ${Y(d.price)}H${R}" stroke="#fff" stroke-dasharray="5 6" opacity=".7"/>
+    <text x="${L}" y="${Y(d.price) - 9}">${l ? AR.m1 : 'ASKING PRICE'}</text>
+    <circle cx="${X(5)}" cy="${Y(cum[5])}" r="4" fill="#fff"/><text x="${X(5) + 10}" y="${Y(cum[5]) + 16}">${(cum[5] / 1e6).toFixed(1)}M · ${l ? AR.cy : 'YEAR'} 5</text>
+    ${back ? `<path d="M${X(back)} ${Y(d.price)}V${B}" stroke="#f0d9a4" stroke-dasharray="3 4"/><circle cx="${X(back)}" cy="${Y(d.price)}" r="6" fill="#f0d9a4"/>
+      <text x="${X(back)}" y="${Y(d.price) - 16}" text-anchor="middle" style="fill:#f0d9a4">${l ? AR.cb : 'CAPITAL RETURNED'} · ${back.toFixed(1)}</text>` : ''}
+    ${[0, 5, 10, 15, 20].map(y => `<text x="${X(y)}" y="${B + 22}" text-anchor="${y ? (y === N ? 'end' : 'middle') : 'start'}" opacity=".7">${y ? y : (l ? AR.cy : 'YEAR') + ' 0'}</text>`).join('')}`;
+  // apartment mix
+  $('#mixBar').innerHTML = DEAL.mix.map(m => `<i style="flex:${m[1]}"></i>`).join('');
+  $('#mixList').innerHTML = DEAL.mix.map(m => `<li><b>${m[1]}</b>${m[0][l]}<em>${pct(m[1] / DEAL.units)}</em></li>`).join('');
+  // comparison bars: this tower (under the current assumptions) against the alternatives
+  const bars = (rows, fmt) => { const max = Math.max(...rows.map(r => r[1])); return rows.sort((a, b) => b[1] - a[1]).map(r =>
+    `<div class="bar${r[2] ? ' me' : ''}"><span>${r[0]}</span><i style="--w:${r[1] / max}"></i><em>${fmt(r[1])}</em></div>`).join(''); };
+  const me = l ? AR.this : 'This tower', withPrice = COMPS.filter(c => c[2]);
+  $('#compare').hidden = !COMPS.length; document.querySelector('nav a[href="#compare"]').hidden = !COMPS.length;
+  $('#barsYield').innerHTML = COMPS.length ? bars([[me, d.net, 1], ...COMPS.map(c => [c[0][l], c[1]])], pct) : '';
+  $('#barsM2').innerHTML = withPrice.length ? bars([[me, d.price / DEAL.units, 1], ...withPrice.map(c => [c[0][l], c[2]])], v => Math.round(v).toLocaleString('en') + ' ' + DEAL.currency) : '';
+}
+$('#kGrow').value = DEAL.growth * 100;
+['kPrice', 'kRent', 'kGrow'].forEach(id => $('#' + id).oninput = renderDeal);
+
+// ---- The page after the journey ---------------------------------------------------------
+// Interior photographs: [file in interiors/, [caption EN, AR], tile shape: w = wide feature, f = full width, '' = standard]
+// The files in interiors/ have the view through every window blurred — the skyline would give the building away.
+const GALLERY = [
+  ['lobby-1', ['The lobby', 'اللوبي'], 'w'], ['living-1', ['Living room', 'غرفة المعيشة'], 'w'],
+  ['lobby-3', ['Lobby lounge', 'صالة اللوبي'], ''], ['bedroom-1', ['Master bedroom', 'غرفة النوم الرئيسية'], ''], ['dining', ['Dining', 'غرفة الطعام'], ''], ['bathroom', ['Bathroom', 'الحمّام'], ''],
+  ['pool-1', ['Indoor pool', 'المسبح الداخلي'], 'w'], ['living-2', ['Living & dining', 'المعيشة والطعام'], ''], ['bedroom-2', ['Twin bedroom', 'غرفة نوم بسريرين'], ''],
+  ['gym', ['Fitness centre', 'النادي الرياضي'], ''], ['pool-2', ['Pool deck', 'جلسة المسبح'], ''], ['lobby-2', ['Reception lounge', 'صالة الاستقبال'], 'f'],
+];
+// Footage cards: [clip, index into PLACES for the name and distance — or a [EN, AR] title for West Bay itself]
+const CARDS = [['westbay-1', ['West Bay', 'الخليج الغربي']], ['westbay-night', ['West Bay by night', 'الخليج الغربي ليلًا']], ['westbay-2', 2], ['souq', 4], ['mia', 5], ['pearl', 0]];
+function renderSections(l) {
+  const dist = i => `≈ ${PLACES[i][6]} ${l ? arMin(PLACES[i][6]) : 'min'}`;
+  $('#cards').innerHTML = CARDS.map(([clip, i], n) => `<div class="card${n ? '' : ' open'}"><video src="reels/${clip}.mp4" muted loop playsinline preload="metadata"></video>
+    <div><h3>${i.length ? i[l] : PLACES[i][2][l].replace(/^THE /, 'The ').replace(/\B[A-Z]+/g, w => w.toLowerCase()).replace(' Of ', ' of ')}</h3><p>${i.length ? (l ? AR.yours : 'Your address') : dist(i)}</p></div></div>`).join('');
+  const cards = [...$('#cards').children];
+  cards.forEach(c => { c.onmouseenter = () => cards.forEach(o => o.classList.toggle('open', o === c)); });
+  $('#reachList').innerHTML = PLACES.map((pl, i) => [pl[6], `<li><i>0${0}</i><b>${pl[2][l].replace(/\B[A-Z]+/g, w => w.toLowerCase()).replace(' Of ', ' of ')}${pl[3][l] ? `<small>${pl[3][l]}</small>` : ''}</b><em>${dist(i)}</em></li>`])
+    .sort((a, b) => a[0] - b[0]).map((x, n) => x[1].replace('<i>00</i>', `<i>0${n + 1}</i>`)).join('');
+  $('#gallery').innerHTML = GALLERY.map(([file, cap, shape]) => `<div class="frame ${shape}"><img src="interiors/${file}.jpg" alt="${cap[0]}" loading="lazy"><b>${cap[l]}</b></div>`).join('');
+  [...$('#gallery').children].forEach(f => { f.onclick = () => { $('#lightbox img').src = f.firstChild.src; $('#lightbox p').textContent = f.lastChild.textContent; $('#lightbox').classList.add('on'); }; });
+  const words = l ? ['الخليج الغربي · الدوحة', `${DEAL.units} شقة`, '44 طابقًا سكنيًا', `عائد صافٍ ${pct(DEAL.noi / DEAL.price)}`, 'أرضي + ميزانين · 3 طوابق سفلية', 'مساحة الأرض 2,000 م²'] : ['West Bay · Doha', `${DEAL.units} apartments`, '44 residential floors', `${pct(DEAL.noi / DEAL.price)} net yield`, 'Ground + Mezzanine · 3 basements', '2,000 m² plot'];
+  $('#marquee').innerHTML = [...words, ...words, ...words, ...words].map(w => `<span>${w}</span>`).join('');
+}
+// reveal on scroll, count the numbers up, and play the footage only while it is on screen
+const seen = new IntersectionObserver(es => es.forEach(e => {
+  if (!e.isIntersecting) return;
+  e.target.classList.add('in'); seen.unobserve(e.target);
+  e.target.querySelectorAll('[data-count]').forEach(b => {
+    const to = +b.dataset.count, t0 = performance.now();
+    (function step(now) { const t = clamp((now - t0) / 1600); b.textContent = Math.round(to * (1 - Math.pow(1 - t, 3))).toLocaleString('en'); if (t < 1) requestAnimationFrame(step); })(t0);
+  });
+}), { threshold: .2 });
+document.querySelectorAll('.rise').forEach(el => seen.observe(el));
+new IntersectionObserver(es => es.forEach(e => $('#cards').querySelectorAll('video').forEach(v => e.isIntersecting ? v.play().catch(() => {}) : v.pause())), { threshold: .1 }).observe($('#address'));
+$('#lightbox').onclick = () => $('#lightbox').classList.remove('on');
+addEventListener('keydown', e => { if (e.key === 'Escape') $('#lightbox').classList.remove('on'); });
+function pageScroll() {
+  // the header turns dark while a light section sits under it
+  document.body.classList.toggle('onlight', [...document.querySelectorAll('.sec.light')].some(s => { const r = s.getBoundingClientRect(); return r.top < 50 && r.bottom > 50; }));
+  // three rings drift together as their section crosses the screen, then the name appears
+  const r = $('#rings').getBoundingClientRect(), t = span(1 - (r.top + r.height / 2) / innerHeight, .12, .58), rings = $('#rings').children, gap = Math.min(innerWidth * .26, 300) * (1 - t);
+  [-1, 0, 1].forEach((d, i) => { rings[i].style.transform = `translateX(${d * gap}px)`; rings[i].style.color = `rgba(255,255,255,${1 - t})`; });
+  rings[3].style.opacity = span(t, .8, 1);
+}
+addEventListener('scroll', pageScroll, { passive: true });
+
+// ---- Shared: scroll → progress → render -------------------------------------------
+function render(p) {
+  const mapOut = T.after ? span(p, T.mapEnd - WIPE, T.mapEnd) : 0;            // gold line wipes the map away, bottom to top
+  const facIn = T.after ? span(p, T.cineEnd - WIPE, T.cineEnd) : 0;           // and later draws the facade in the same way
+  const end = 0;
+
+  map.style.visibility = mapOut < 1 ? 'visible' : 'hidden';
+  map.style.clipPath = mapOut > 0 ? `inset(0 0 ${mapOut * 100}% 0)` : 'none';
+  if (mapOut < 1) drawMap(clamp(p / T.mapEnd));
+  if (mapOut > 0) { showReels(-1); $('#measure').style.opacity = 0; if (facIn < 1) drawCine(clamp((p - T.mapEnd + WIPE) / (T.cineEnd - T.mapEnd))); }
+  const rise = span(p, T.cineEnd - WIPE, T.facadeEnd);          // pan the render from the entrance up to the roof
+  facade.style.visibility = facIn > 0 ? 'visible' : 'hidden';
+  facade.style.clipPath = facIn < 1 ? `inset(${(1 - facIn) * 100}% 0 0 0)` : 'none';
+  facade.style.objectPosition = `50% ${mix(100, 0, rise)}%`;
+  const w = mapOut > 0 && mapOut < 1 ? mapOut : facIn > 0 && facIn < 1 ? facIn : -1;
+  wipe.style.opacity = w < 0 ? 0 : Math.min(1, Math.sin(Math.PI * w) * 3);
+  if (w >= 0) wipe.style.top = (1 - w) * 100 + '%';
+
+  document.body.classList.toggle('end', end > .3);
+  captions.forEach(c => {
+    const a = +c.dataset.in, b = +c.dataset.out;
+    const o = Math.min(span(p, a, a + .02), 1 - span(p, b - .02, b));
+    c.style.opacity = o; c.style.transform = `translateY(${(1 - o) * 14}px)`;
+  });
+  $('#hint').style.opacity = .7 * (1 - span(p, .01, .04));
+  $('#concept').style.opacity = T.after ? .6 * span(p, T.mapEnd - .01, T.mapEnd) * (1 - end) : 0;
+  $('#chapters').style.opacity = 1 - end;
+  $('#bar').style.transform = `scaleX(${p})`;
+  let active = 0; CHAPTERS.forEach((c, i) => { if (typeof c[0] === 'number' && p >= c[0] - .035) active = i; });
+  [...$('#chapters').children].forEach((el, i) => el.classList.toggle('on', i === active));
+}
+const scrollMax = () => track.offsetHeight - innerHeight;
+function onScroll() { target = clamp(scrollY / scrollMax()); }
+function tick() {
+  const next = p < 0 ? target : p + (target - p) * .09;        // smoothing gives the cinematic glide
+  if (Math.abs(next - p) > .00005) { p = next; render(p); }
+  requestAnimationFrame(tick);
+}
+addEventListener('scroll', onScroll, { passive: true });
+addEventListener('resize', () => { onScroll(); p = -1; });
+setLang(0); onScroll(); pageScroll(); tick();
+</script>
+</body>
+</html>
